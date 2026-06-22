@@ -32,32 +32,32 @@
             
             <div class="slider-box">
                 <label style="font-weight:bold;">Pump Speed Control:</label>
-                <input type="range" id="rpmSlider" min="1000" max="3000" step="50" value="1650">
-                <div style="font-size: 16px; color: #d35400; font-weight: bold;"><span id="rpmVal">1650</span> RPM</div>
+                <input type="range" id="rpmSlider" min="1000" max="3000" step="50" value="1800">
+                <div style="font-size: 16px; color: #d35400; font-weight: bold;"><span id="rpmVal">1800</span> RPM</div>
             </div>
 
             <div class="slider-box feed">
                 <label style="font-weight:bold;">Feed Sol. Concentration (% wt):</label>
-                <input type="range" id="densitySlider" min="15" max="45" step="1" value="25">
+                <input type="range" id="densitySlider" min="5" max="65" step="1" value="25">
                 <div style="font-size: 16px; color: #f39c12; font-weight: bold;"><span id="densityVal">25</span> % w/w</div>
             </div>
 
             <div class="slider-box geo">
                 <label style="font-weight:bold;">Vortex Finder Diameter (mm):</label>
-                <input type="range" id="vortexSlider" min="30" max="60" step="1" value="45">
-                <div style="font-size: 16px; color: #8e44ad; font-weight: bold;"><span id="vortexVal">45</span> mm</div>
+                <input type="range" id="vortexSlider" min="50" max="110" step="10" value="50">
+                <div style="font-size: 16px; color: #8e44ad; font-weight: bold;"><span id="vortexVal">50</span> mm</div>
             </div>
 
             <div class="slider-box geo">
                 <label style="font-weight:bold;">Apex Spigot Diameter (mm):</label>
-                <input type="range" id="apexSlider" min="12" max="32" step="1" value="22">
-                <div style="font-size: 16px; color: #c0392b; font-weight: bold;"><span id="apexVal">22</span> mm</div>
+                <input type="range" id="apexSlider" min="34" max="82" step="8" value="58">
+                <div style="font-size: 16px; color: #c0392b; font-weight: bold;"><span id="apexVal">58</span> mm</div>
             </div>
             
             <h4 style="margin: 10px 0 5px 0; color:#34495e;">Live Diagnostics</h4>
             <div class="metric-group">
                 <div class="metric-card"><span class="metric-label">Flow Rate (Q)</span><div id="mQ" class="metric-value" style="color:#2980b9;">0</div><span style="font-size:10px;color:#777;">m³/h</span></div>
-                <div class="metric-card"><span class="metric-label">Inlet Pressure (P)</span><div id="mP" class="metric-value" style="color:#27ae60;">0</div><span style="font-size:10px;color:#777;">bar</span></div>
+                <div class="metric-card"><span class="metric-label">Inlet Pressure (P)</span><div id="mP" class="metric-value" style="color:#27ae60;">0</div><span style="font-size:10px;color:#777;">kPa</span></div>
                 <div class="metric-card"><span class="metric-label">U/F Solids Conc.</span><div id="mSolids" class="metric-value" style="color:#b87333;">0</div><span style="font-size:10px;color:#777;">% w/w</span></div>
                 <div class="metric-card"><span class="metric-label">Bypass Fraction</span><div id="mBypass" class="metric-value" style="color:#7f8c8d;">0</div><span style="font-size:10px;color:#777;">% of Feed</span></div>
             </div>
@@ -94,8 +94,8 @@
         const dischargeStatus = document.getElementById('dischargeStatus');
 
         // State Variables
-        let rpm = 1650; let feedDensity = 25; let vortexDia = 45; let apexDia = 22;
-        let Q = 0; let H = 0; let P = 0; let ufSolidsWeight = 45; let bypassFraction = 10;
+        let rpm = 1800; let feedDensity = 25; let vortexDia = 50; let apexDia = 58;
+        let Q = 0; let H = 0; let P_kPa = 0; let ufSolidsWeight = 45; let bypassFraction = 10;
         let particles = [];
         
         const sizes = [60, 100, 150, 200, 300, 425, 600, 850, 1180, 1400, 1700, 2000];
@@ -105,26 +105,31 @@
             let ratio = rpm / 3000;
             let qTry = 0;
             
-            // Vortex diameter modifies flow capacity/resistance (Larger Vortex finder = lower system resistance)
-            let geoResistanceCoeff = 0.005 * Math.pow(45 / vortexDia, 1.3);
+            // Vortex diameter modifies flow capacity/resistance
+            let geoResistanceCoeff = 0.0035 * Math.pow(50 / vortexDia, 1.3);
 
             while(qTry < 180) {
-                let hPump = (48 * ratio * ratio) - 0.0031 * (qTry * qTry);
+                let hPump = (52 * ratio * ratio) - 0.0028 * (qTry * qTry);
                 let hSyst = 2.0 + geoResistanceCoeff * (qTry * qTry);
                 if (hPump <= hSyst) { Q = qTry; H = hSyst; break; }
                 qTry += 0.2;
             }
             if(rpm < 1050) { Q = 0; H = 2.0; }
-            P = (H - 2.0) * 0.098; if(P < 0) P = 0;
+            
+            // Scaled pressure model calibrated up to 200 kPa max
+            let P_bar = (H - 2.0) * 0.098; 
+            P_kPa = P_bar * 100 * 1.15; 
+            if(P_kPa < 0) P_kPa = 0;
+            if(P_kPa > 200) P_kPa = 200;
 
-            // 1. Bypass Logic: High pressure pushes water harder to overflow reducing bypass. High feed density dramatically spikes bypass.
-            bypassFraction = (18 + (feedDensity * 0.6) - (P * 12.0));
-            if(bypassFraction < 4) bypassFraction = 4;
-            if(bypassFraction > 48) bypassFraction = 48;
+            // 1. Bypass Logic: Lower pressure = higher bypass. Smaller apex = lower bypass.
+            bypassFraction = (18 + (feedDensity * 0.5) - (P_kPa * 0.1) + ((apexDia - 34) * 0.35));
+            if(bypassFraction < 2) bypassFraction = 2;
+            if(bypassFraction > 60) bypassFraction = 60;
 
-            // 2. Underflow Solids Concentration Logic: Driven by feed density, pressure pushing coarser fractions down, and heavily restricted by small apex openings
-            let apexRestrictionFactor = Math.pow(22 / apexDia, 1.8);
-            ufSolidsWeight = feedDensity + (P * 15.0 * apexRestrictionFactor) + ((45 - vortexDia)*0.2);
+            // 2. Underflow Solids Concentration Logic: Smaller apex = higher density/concentration
+            let apexRestrictionFactor = Math.pow(58 / apexDia, 1.2);
+            ufSolidsWeight = feedDensity + (P_kPa * 0.18 * apexRestrictionFactor) + ((82 - apexDia) * 0.35);
             if (ufSolidsWeight > 82) ufSolidsWeight = 82; 
         }
 
@@ -135,14 +140,16 @@
             
             for(let i=0; i<=4; i++) {
                 let y = h - pad - (i * (h - pad*2)/4); qhCtx.beginPath(); qhCtx.moveTo(pad, y); qhCtx.lineTo(w-pad, y); qhCtx.stroke();
-                qhCtx.fillText((i*10)+'m', 5, y+3);
+                qhCtx.fillText((i*50)+' kPa', 5, y+3);
             }
             
-            // Dynamic resistance line representation
-            let geoResistanceCoeff = 0.005 * Math.pow(45 / vortexDia, 1.3);
+            let geoResistanceCoeff = 0.0035 * Math.pow(50 / vortexDia, 1.3);
             qhCtx.strokeStyle = '#7f8c8d'; qhCtx.lineWidth = 1.5; qhCtx.beginPath();
             for(let q=0; q<=120; q+=5) {
-                let x = pad + (q * (w-pad*2)/120); let y = h - pad - ((2.0 + geoResistanceCoeff*q*q) * (h-pad*2)/40);
+                let x = pad + (q * (w-pad*2)/120); 
+                let hpSyst = 2.0 + geoResistanceCoeff * (q * q);
+                let pKpaSyst = (hpSyst - 2.0) * 0.098 * 100 * 1.15;
+                let y = h - pad - (pKpaSyst * (h-pad*2)/200);
                 if(q===0) qhCtx.moveTo(x,y); else qhCtx.lineTo(x,y);
             }
             qhCtx.stroke();
@@ -150,17 +157,20 @@
             qhCtx.strokeStyle = '#e74c3c'; qhCtx.lineWidth = 2; qhCtx.beginPath();
             let r = rpm/3000; let f = true;
             for(let q=0; q<=120; q+=5) {
-                let x = pad + (q * (w-pad*2)/120); let hp = (48*r*r) - 0.0031*q*q; let y = h - pad - (hp * (h-pad*2)/40);
-                if(hp >= 0 && y <= h-pad && y >= pad) { if(f) { qhCtx.moveTo(x,y); f = false; } else qhCtx.lineTo(x,y); }
+                let x = pad + (q * (w-pad*2)/120); 
+                let hp = (52*r*r) - 0.0028*q*q; 
+                let pKpaPump = (hp - 2.0) * 0.098 * 100 * 1.15;
+                let y = h - pad - (pKpaPump * (h-pad*2)/200);
+                if(pKpaPump >= 0 && y <= h-pad && y >= pad) { if(f) { qhCtx.moveTo(x,y); f = false; } else qhCtx.lineTo(x,y); }
             }
             qhCtx.stroke();
             
             if(Q > 0) {
-                let px = pad + (Q * (w-pad*2)/120); let py = h - pad - (H * (h-pad*2)/40);
+                let px = pad + (Q * (w-pad*2)/120); let py = h - pad - (P_kPa * (h-pad*2)/200);
                 qhCtx.fillStyle = '#2c3e50'; qhCtx.beginPath(); qhCtx.arc(px, py, 5, 0, Math.PI*2); qhCtx.fill();
             }
             qhCtx.fillStyle = '#000'; qhCtx.fillText("Flow Q (m3/h)", w - 70, h - 5);
-            qhCtx.fillText("Pump Performance Loop", pad + 5, 14);
+            qhCtx.fillText("System Loop Capacity", pad + 5, 14);
         }
 
         function drawPSD() {
@@ -181,7 +191,6 @@
                 }
             });
             
-            // Base reference feed curve
             psdCtx.strokeStyle = '#cbd1d2'; psdCtx.lineWidth = 1; psdCtx.setLineDash([2,2]); psdCtx.beginPath();
             for(let i=0; i<sizes.length; i++) {
                 let x = pad + i*step; let y = h - pad - (masterSCurve[i] * (h - pad*2)/100);
@@ -189,16 +198,14 @@
             }
             psdCtx.stroke(); psdCtx.setLineDash([]);
             
-            // Empirical shift factor logic:
-            // High Pressure shifts LEFT (finer). High Feed Density shifts RIGHT (coarser)
-            // Large Vortex finder shifts RIGHT (coarser). Large Apex shifts LEFT (finer)
-            let shiftFactor = (P * 2.5) - (feedDensity * 0.12) - ((vortexDia - 45) * 0.15) + ((apexDia - 22) * 0.1);
+            // Empirical shift factor logic
+            let shiftFactor = (P_kPa * 0.025) - (feedDensity * 0.08) - ((vortexDia - 50) * 0.08) + ((apexDia - 58) * 0.05);
             if(shiftFactor > 5.5) shiftFactor = 5.5;
             if(shiftFactor < -2) shiftFactor = -2;
 
-            // Curve steepness (sharpness factor): Spikes with high pressure, drops with high feed density crowding
-            let steepnessModifier = 1.0 + (P * 0.25) - (feedDensity * 0.015);
-            if(steepnessModifier < 0.5) steepnessModifier = 0.5;
+            // Curve steepness modifier
+            let steepnessModifier = 1.0 + (P_kPa * 0.003) - (feedDensity * 0.01);
+            if(steepnessModifier < 0.4) steepnessModifier = 0.4;
             if(steepnessModifier > 1.8) steepnessModifier = 1.8;
             
             psdCtx.strokeStyle = '#2980b9'; psdCtx.lineWidth = 2.5; psdCtx.beginPath();
@@ -213,11 +220,14 @@
                 let valB = masterSCurve[Math.max(0, Math.min(masterSCurve.length-1, baseIdx + 1))];
                 let baseInterp = valA + frac * (valB - valA);
                 
-                // Scale according to dynamic baseline bypass and apply steepness skew around the center (50%) value
                 let skewedValue = 50 + (baseInterp - 50) * steepnessModifier;
-                let finalValue = bypassFraction + ((100 - bypassFraction) * (skewedValue / 100));
+                
+                // If pressure < 30 kPa, whole curve matches 100% reporting to underflow (Bypass becomes 100%)
+                let effectiveBypass = (P_kPa < 30) ? 100 : bypassFraction;
+                let finalValue = effectiveBypass + ((100 - effectiveBypass) * (skewedValue / 100));
+                
                 if(finalValue > 100) finalValue = 100;
-                if(finalValue < bypassFraction) finalValue = bypassFraction;
+                if(finalValue < effectiveBypass) finalValue = effectiveBypass;
 
                 let y = h - pad - (finalValue * (h - pad*2)/100); 
                 if(i===0) psdCtx.moveTo(x,y); else psdCtx.lineTo(x,y);
@@ -234,7 +244,6 @@
                 this.size = Math.random()*5 + 1; this.state = 'tank';
                 this.x = 40 + Math.random()*40; this.y = 330 + Math.random()*20;
                 this.angle = Math.random()*Math.PI*2; this.radius = 15;
-                // Coarser particles colored brown, fine particles colored blue
                 this.color = this.size > (4.2 - feedDensity*0.04) ? '#b87333' : '#3498db';
             }
             move() {
@@ -250,24 +259,38 @@
                     this.radius = Math.min(lim-1, this.radius + (this.size/6)*0.2*f);
                     this.x = 75 + Math.cos(this.angle)*this.radius;
                     
-                    // Separation logic modified via vortex/pressure thresholds
-                    let operationalCutOff = (4.5 - P * 1.0) + ((vortexDia - 45)*0.05);
-                    if(this.y > 175 && this.size < operationalCutOff && Math.random() > (bypassFraction/100)) this.state = 'cy_up';
+                    let operationalCutOff = (4.5 - P_kPa * 0.01) + ((vortexDia - 50)*0.03);
+                    
+                    // Core collapse threshold logic (< 30 kPa generates ONLY underflow)
+                    if(P_kPa >= 30 && this.y > 175 && this.size < operationalCutOff && Math.random() > (bypassFraction/100)) {
+                        this.state = 'cy_up';
+                    }
                     if(this.y >= 240) this.state = 'under';
                 }
                 else if(this.state === 'cy_up') { this.angle -= 0.22*f; this.y -= f*1.2; this.radius = Math.max(2, this.radius-0.3); this.x = 75 + Math.cos(this.angle)*this.radius; if(this.y <= 95) this.state = 'over'; }
+                
+                // Tracing overflow pipes back into slurry tank
+                else if(this.state === 'over') { 
+                    if(this.y > 50 && this.x > 70) {
+                        this.y -= f * 2; this.x = 75;
+                    } else if(this.x > 15 && this.y <= 55) {
+                        this.x -= f * 2; this.y = 50;
+                    } else if(this.y < 350 && this.x <= 20) {
+                        this.y += f * 2; this.x = 15;
+                    } else if(this.x < 30 && this.y >= 345) {
+                        this.x += f * 2; this.y = 350;
+                    } else {
+                        this.state = 'tank';
+                    }
+                }
                 else if(this.state === 'under') { 
                     this.y += f * 2.2; 
                     let distFromApex = this.y - 240;
                     
-                    // Continuous cone umbrella angle logic. Clamped strictly down to 0 minimum.
                     let currentSpread = 32 - (ufSolidsWeight - 40) * 1.05;
                     
-                    // Roping cutoff trigger point adjusted exactly to 79.0% solids w/w
-                    if(ufSolidsWeight >= 79.0) {
-                        currentSpread = 0.0; // Angle from vertical is exactly 0
-                    } else if (currentSpread < 0) {
-                        currentSpread = 0.0; // Safety floor rule preventing negative umbrella geometry
+                    if(ufSolidsWeight >= 79.0 || currentSpread < 0) {
+                        currentSpread = 0.0; // Enforces minimum vertical drop angle of 0
                     }
                     
                     let spreadX = (distFromApex / 40) * currentSpread;
@@ -275,27 +298,22 @@
                     this.x = 75 + Math.cos(this.angle) * (2 + spreadX);
                     if(this.y > 315) this.state = 'tank'; 
                 }
-                else if(this.state === 'over') { this.x = 75; this.y -= f*2; if(this.y < 35) this.state = 'tank'; }
             }
             draw() { pCtx.beginPath(); pCtx.arc(this.x, this.y, this.size/2+1, 0, Math.PI*2); pCtx.fillStyle = this.color; pCtx.fill(); }
         }
 
-        // Initialize particle array
         for(let i=0; i<95; i++) particles.push(new Part());
 
         function drawLayout() {
             pCtx.clearRect(0,0,360,400); pCtx.strokeStyle = '#34495e'; pCtx.lineWidth = 3; pCtx.fillStyle = '#ecf0f1';
-            // Pump circuit components
             pCtx.fillRect(30, 300, 60, 60); pCtx.strokeRect(30, 300, 60, 60);
             pCtx.fillStyle = '#dff9fb'; pCtx.fillRect(32,315,56,43);
             pCtx.beginPath(); pCtx.moveTo(90, 350); pCtx.lineTo(180, 350); pCtx.stroke();
             pCtx.fillStyle = '#bdc3c7'; pCtx.beginPath(); pCtx.arc(195, 350, 15, 0, Math.PI*2); pCtx.fill(); pCtx.stroke();
             pCtx.beginPath(); pCtx.moveTo(205, 335); pCtx.lineTo(205, 110); pCtx.lineTo(95, 110); pCtx.stroke();
             
-            // Render Cyclone Body Geometry
             pCtx.fillStyle = '#eaeded'; pCtx.beginPath(); pCtx.moveTo(60, 95); pCtx.lineTo(50, 95); pCtx.lineTo(50, 135); pCtx.lineTo(68, 240); pCtx.lineTo(82, 240); pCtx.lineTo(100, 135); pCtx.lineTo(100, 95); pCtx.closePath(); pCtx.fill(); pCtx.stroke();
             
-            // Dynamic Envelope boundary trace representation
             let currentSpread = 32 - (ufSolidsWeight - 40) * 1.05;
             if(ufSolidsWeight >= 79.0 || currentSpread < 0) currentSpread = 0.0;
             
@@ -306,6 +324,7 @@
             pCtx.moveTo(82, 240); pCtx.lineTo(75 + (2 + (75/40)*currentSpread), 315);
             pCtx.stroke(); pCtx.setLineDash([]);
 
+            // Fixed return pipeline routing
             pCtx.strokeStyle = '#7f8c8d'; pCtx.lineWidth = 2;
             pCtx.beginPath(); pCtx.moveTo(75, 95); pCtx.lineTo(75, 50); pCtx.lineTo(15, 50); pCtx.lineTo(15, 350); pCtx.lineTo(30, 350); pCtx.stroke();
 
@@ -318,14 +337,17 @@
             particles.forEach(p => { p.move(); p.draw(); });
             drawQH(); drawPSD();
             
-            // Textual updates
             document.getElementById('mQ').innerText = Q.toFixed(1);
-            document.getElementById('mP').innerText = P.toFixed(2);
+            document.getElementById('mP').innerText = P_kPa.toFixed(1);
             document.getElementById('mSolids').innerText = ufSolidsWeight.toFixed(1);
-            document.getElementById('mBypass').innerText = bypassFraction.toFixed(1);
+            document.getElementById('mBypass').innerText = (P_kPa < 30) ? "100.0" : bypassFraction.toFixed(1);
 
-            // Conditional warning evaluations
-            if(ufSolidsWeight >= 79.0) {
+            if(P_kPa < 30) {
+                dischargeStatus.innerText = "LOW PRESSURE: Core Collapsed (<30 kPa)";
+                dischargeStatus.className = "status-alert";
+                dischargeStatus.style.backgroundColor = "#e2e3e5";
+                dischargeStatus.style.color = "#383d41";
+            } else if(ufSolidsWeight >= 79.0) {
                 dischargeStatus.innerText = "CRITICAL: Roping Condition (≥79% w/w)!";
                 dischargeStatus.className = "status-alert status-rope";
             } else if (ufSolidsWeight > 66.0) {
@@ -343,7 +365,6 @@
             requestAnimationFrame(loop);
         }
 
-        // Operational Panel Listeners
         rpmSlider.addEventListener('input', (e) => { rpm = parseInt(e.target.value); rpmVal.innerText = rpm; });
         densitySlider.addEventListener('input', (e) => { feedDensity = parseInt(e.target.value); densityVal.innerText = feedDensity; });
         vortexSlider.addEventListener('input', (e) => { vortexDia = parseInt(e.target.value); vortexVal.innerText = vortexDia; });
