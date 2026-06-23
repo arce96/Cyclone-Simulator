@@ -58,6 +58,7 @@
             <div class="metric-group">
                 <div class="metric-card"><span class="metric-label">Flow Rate (Q)</span><div id="mQ" class="metric-value" style="color:#2980b9;">0</div><span style="font-size:10px;color:#777;">m³/h</span></div>
                 <div class="metric-card"><span class="metric-label">Inlet Pressure (P)</span><div id="mP" class="metric-value" style="color:#27ae60;">0</div><span style="font-size:10px;color:#777;">kPa</span></div>
+                <div class="metric-card"><span class="metric-label">Cut Size (d50)</span><div id="mD50" class="metric-value" style="color:#9b59b6;">0</div><span style="font-size:10px;color:#777;">microns (µm)</span></div>
                 <div class="metric-card"><span class="metric-label">U/F Solids Conc.</span><div id="mSolids" class="metric-value" style="color:#b87333;">0</div><span style="font-size:10px;color:#777;">% w/w</span></div>
                 <div class="metric-card"><span class="metric-label">Bypass Fraction</span><div id="mBypass" class="metric-value" style="color:#7f8c8d;">0</div><span style="font-size:10px;color:#777;">% of Feed</span></div>
             </div>
@@ -95,11 +96,8 @@
 
         // State Variables
         let rpm = 1800; let feedDensity = 25; let vortexDia = 50; let apexDia = 58;
-        let Q = 0; let H = 0; let P_kPa = 0; let ufSolidsWeight = 45; let bypassFraction = 10;
+        let Q = 0; let H = 0; let P_kPa = 0; let ufSolidsWeight = 45; let bypassFraction = 10; let d50 = 50;
         let particles = [];
-        
-        const sizes = [60, 100, 150, 200, 300, 425, 600, 850, 1180, 1400, 1700, 2000];
-        const masterSCurve = [0, 2, 7, 18, 38, 62, 80, 91, 96, 99, 100, 100, 100, 100, 100, 100, 100];
 
         function calc() {
             let ratio = rpm / 3000;
@@ -131,6 +129,17 @@
             let apexRestrictionFactor = Math.pow(58 / apexDia, 1.2);
             ufSolidsWeight = feedDensity + (P_kPa * 0.18 * apexRestrictionFactor) + ((82 - apexDia) * 0.35);
             if (ufSolidsWeight > 82) ufSolidsWeight = 82; 
+
+            // 3. Cut Size (d50) Empirical Modeling (Ranges strictly from 25um to 130um)
+            // Baseline centered at ~65 microns
+            let densityComponent = (feedDensity - 5) * 1.1;             // Higher = coarser
+            let vortexComponent = (vortexDia - 50) * 0.5;               // Larger = coarser
+            let apexComponent = (82 - apexDia) * 0.6;                   // Smaller = coarser
+            let pressureComponent = (200 - P_kPa) * 0.25;               // Lower = coarser
+
+            d50 = 25 + (densityComponent + vortexComponent + apexComponent + pressureComponent);
+            if (d50 < 25) d50 = 25;
+            if (d50 > 130) d50 = 130;
         }
 
         function drawQH() {
@@ -173,69 +182,85 @@
             qhCtx.fillText("System Loop Capacity", pad + 5, 14);
         }
 
+        // Helper helper mapping size values to logarithmic X-axis coordinate bounds
+        function getLogX(size, width, padding) {
+            let logMin = Math.log10(10);
+            let logMax = Math.log10(10000);
+            let currentLog = Math.log10(size);
+            return padding + ((currentLog - logMin) / (logMax - logMin)) * (width - padding * 2);
+        }
+
         function drawPSD() {
-            const w = psdCanvas.width; const h = psdCanvas.height; const pad = 30;
+            const w = psdCanvas.width; const h = psdCanvas.height; const pad = 35;
             psdCtx.fillStyle = '#fafafa'; psdCtx.fillRect(0,0,w,h);
             psdCtx.strokeStyle = '#e0e0e0'; psdCtx.fillStyle = '#666'; psdCtx.font = '9px sans-serif';
             
+            // Vertical Y Axis ticks
             for(let i=0; i<=5; i++) {
                 let y = h - pad - (i * (h - pad*2)/5); psdCtx.beginPath(); psdCtx.moveTo(pad, y); psdCtx.lineTo(w-pad, y); psdCtx.stroke();
                 psdCtx.fillText((i*20)+'%', 5, y+3);
             }
             
-            let step = (w - pad*2) / (sizes.length - 1);
-            sizes.forEach((s, i) => {
-                let x = pad + i * step;
-                if(i === 0 || i === 3 || i === 7 || i === sizes.length-1) {
-                    psdCtx.fillText(s, x-8, h-pad+12);
-                }
+            // Logarithmic X Axis Grid lines (10, 100, 1000, 10000)
+            const decades = [10, 100, 1000, 10000];
+            decades.forEach(dec => {
+                let x = getLogX(dec, w, pad);
+                psdCtx.strokeStyle = '#dcdde1';
+                psdCtx.beginPath(); psdCtx.moveTo(x, pad); psdCtx.lineTo(x, h - pad); psdCtx.stroke();
+                psdCtx.fillStyle = '#000';
+                psdCtx.fillText(dec, x - 8, h - pad + 12);
             });
-            
-            psdCtx.strokeStyle = '#cbd1d2'; psdCtx.lineWidth = 1; psdCtx.setLineDash([2,2]); psdCtx.beginPath();
-            for(let i=0; i<sizes.length; i++) {
-                let x = pad + i*step; let y = h - pad - (masterSCurve[i] * (h - pad*2)/100);
-                if(i===0) psdCtx.moveTo(x,y); else psdCtx.lineTo(x,y);
+
+            // Sub-ticks for logarithmic grid definition
+            psdCtx.strokeStyle = '#f1f2f6';
+            for (let dec = 10; dec < 10000; dec *= 10) {
+                for (let sub = 2; sub <= 9; sub++) {
+                    let x = getLogX(dec * sub, w, pad);
+                    psdCtx.beginPath(); psdCtx.moveTo(x, pad); psdCtx.lineTo(x, h - pad); psdCtx.stroke();
+                }
             }
-            psdCtx.stroke(); psdCtx.setLineDash([]);
-            
-            // Empirical shift factor logic
-            let shiftFactor = (P_kPa * 0.025) - (feedDensity * 0.08) - ((vortexDia - 50) * 0.08) + ((apexDia - 58) * 0.05);
-            if(shiftFactor > 5.5) shiftFactor = 5.5;
-            if(shiftFactor < -2) shiftFactor = -2;
 
-            // Curve steepness modifier
-            let steepnessModifier = 1.0 + (P_kPa * 0.003) - (feedDensity * 0.01);
-            if(steepnessModifier < 0.4) steepnessModifier = 0.4;
-            if(steepnessModifier > 1.8) steepnessModifier = 1.8;
-            
+            // Draw a vertical target marker showing exactly where d50 is situated on the log plot
+            let d50X = getLogX(d50, w, pad);
+            psdCtx.strokeStyle = 'rgba(155, 89, 182, 0.3)';
+            psdCtx.lineWidth = 1.5;
+            psdCtx.beginPath(); psdCtx.moveTo(d50X, pad); psdCtx.lineTo(d50X, h - pad); psdCtx.stroke();
+            psdCtx.fillStyle = '#8e44ad';
+            psdCtx.fillText(`d50: ${d50.toFixed(0)}µm`, d50X - 22, pad - 4);
+
+            // Constructing actual Logarithmic S-Curve via standard Plitt/Lynch mathematical style
+            let effectiveBypass = (P_kPa < 30) ? 100 : bypassFraction;
             psdCtx.strokeStyle = '#2980b9'; psdCtx.lineWidth = 2.5; psdCtx.beginPath();
-            
-            for(let i=0; i<sizes.length; i++) {
-                let x = pad + i*step;
-                let lookupIndex = i + shiftFactor;
-                let baseIdx = Math.floor(lookupIndex);
-                let frac = lookupIndex - baseIdx;
-                
-                let valA = masterSCurve[Math.max(0, Math.min(masterSCurve.length-1, baseIdx))];
-                let valB = masterSCurve[Math.max(0, Math.min(masterSCurve.length-1, baseIdx + 1))];
-                let baseInterp = valA + frac * (valB - valA);
-                
-                let skewedValue = 50 + (baseInterp - 50) * steepnessModifier;
-                
-                // If pressure < 30 kPa, whole curve matches 100% reporting to underflow (Bypass becomes 100%)
-                let effectiveBypass = (P_kPa < 30) ? 100 : bypassFraction;
-                let finalValue = effectiveBypass + ((100 - effectiveBypass) * (skewedValue / 100));
-                
-                if(finalValue > 100) finalValue = 100;
-                if(finalValue < effectiveBypass) finalValue = effectiveBypass;
 
-                let y = h - pad - (finalValue * (h - pad*2)/100); 
-                if(i===0) psdCtx.moveTo(x,y); else psdCtx.lineTo(x,y);
+            let firstPoint = true;
+            // Scan across 150 points distributed from 10 to 10000 to construct smooth curve
+            for(let xPixel = pad; xPixel <= w - pad; xPixel++) {
+                // Reverse calculate particle size from the current pixel location
+                let logMin = Math.log10(10);
+                let logMax = Math.log10(10000);
+                let logSize = logMin + ((xPixel - pad) / (w - pad * 2)) * (logMax - logMin);
+                let particleSize = Math.pow(10, logSize);
+
+                // Separation efficiency modeling equation relative to current dynamic d50
+                let ratio = particleSize / d50;
+                let sharpEfficiency = 100 * (1 - Math.exp(-0.693 * Math.pow(ratio, 2.2)));
+                
+                // Overlay active baseline liquid bypass footprint
+                let recoveryToUnderflow = effectiveBypass + ((100 - effectiveBypass) * (sharpEfficiency / 100));
+                
+                let yPixel = h - pad - (recoveryToUnderflow * (h - pad * 2) / 100);
+
+                if (firstPoint) {
+                    psdCtx.moveTo(xPixel, yPixel);
+                    firstPoint = false;
+                } else {
+                    psdCtx.lineTo(xPixel, yPixel);
+                }
             }
             psdCtx.stroke();
             
             psdCtx.fillStyle = '#000'; psdCtx.fillText("Size (um)", w - 50, h - 5);
-            psdCtx.fillText("Actual Partition S-Curve", pad + 5, 14);
+            psdCtx.fillText("Actual Log-Scale Partition S-Curve", pad + 5, 14);
         }
 
         class Part {
@@ -259,10 +284,8 @@
                     this.radius = Math.min(lim-1, this.radius + (this.size/6)*0.2*f);
                     this.x = 75 + Math.cos(this.angle)*this.radius;
                     
-                    let operationalCutOff = (4.5 - P_kPa * 0.01) + ((vortexDia - 50)*0.03);
-                    
                     // Core collapse threshold logic (< 30 kPa generates ONLY underflow)
-                    if(P_kPa >= 30 && this.y > 175 && this.size < operationalCutOff && Math.random() > (bypassFraction/100)) {
+                    if(P_kPa >= 30 && this.y > 175 && this.size < (4.5 - d50 * 0.02) && Math.random() > (bypassFraction/100)) {
                         this.state = 'cy_up';
                     }
                     if(this.y >= 240) this.state = 'under';
@@ -339,6 +362,7 @@
             
             document.getElementById('mQ').innerText = Q.toFixed(1);
             document.getElementById('mP').innerText = P_kPa.toFixed(1);
+            document.getElementById('mD50').innerText = d50.toFixed(0);
             document.getElementById('mSolids').innerText = ufSolidsWeight.toFixed(1);
             document.getElementById('mBypass').innerText = (P_kPa < 30) ? "100.0" : bypassFraction.toFixed(1);
 
