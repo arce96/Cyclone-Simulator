@@ -44,14 +44,14 @@
 
             <div class="slider-box geo">
                 <label style="font-weight:bold;">Vortex Finder Diameter (mm):</label>
-                <input type="range" id="vortexSlider" min="50" max="110" step="10" value="50">
-                <div style="font-size: 16px; color: #8e44ad; font-weight: bold;"><span id="vortexVal">50</span> mm</div>
+                <input type="range" id="vortexSlider" min="70" max="110" step="10" value="70">
+                <div style="font-size: 16px; color: #8e44ad; font-weight: bold;"><span id="vortexVal">70</span> mm</div>
             </div>
 
             <div class="slider-box geo">
                 <label style="font-weight:bold;">Apex Spigot Diameter (mm):</label>
-                <input type="range" id="apexSlider" min="34" max="82" step="8" value="58">
-                <div style="font-size: 16px; color: #c0392b; font-weight: bold;"><span id="apexVal">58</span> mm</div>
+                <input type="range" id="apexSlider" min="34" max="66" step="8" value="50">
+                <div style="font-size: 16px; color: #c0392b; font-weight: bold;"><span id="apexVal">50</span> mm</div>
             </div>
             
             <h4 style="margin: 10px 0 5px 0; color:#34495e;">Live Diagnostics</h4>
@@ -95,7 +95,7 @@
         const dischargeStatus = document.getElementById('dischargeStatus');
 
         // State Variables
-        let rpm = 1800; let feedDensity = 25; let vortexDia = 50; let apexDia = 58;
+        let rpm = 1800; let feedDensity = 25; let vortexDia = 70; let apexDia = 50;
         let Q = 0; let H = 0; let P_kPa = 0; let ufSolidsWeight = 45; let bypassFraction = 10; let d50 = 50;
         let particles = [];
 
@@ -103,41 +103,46 @@
             let ratio = rpm / 3000;
             let qTry = 0;
             
-            // Vortex diameter modifies flow capacity/resistance
-            let geoResistanceCoeff = 0.0035 * Math.pow(50 / vortexDia, 1.3);
+            // Vortex diameter modifies hydraulic flow resistance profiles
+            let geoResistanceCoeff = 0.0035 * Math.pow(70 / vortexDia, 1.3);
 
             while(qTry < 180) {
-                let hPump = (52 * ratio * ratio) - 0.0028 * (qTry * qTry);
+                let hPump = (58 * ratio * ratio) - 0.0025 * (qTry * qTry);
                 let hSyst = 2.0 + geoResistanceCoeff * (qTry * qTry);
                 if (hPump <= hSyst) { Q = qTry; H = hSyst; break; }
                 qTry += 0.2;
             }
             if(rpm < 1050) { Q = 0; H = 2.0; }
             
-            // Scaled pressure model calibrated up to 200 kPa max
+            // Pressure bounds calibration (0 - 200 kPa)
             let P_bar = (H - 2.0) * 0.098; 
-            P_kPa = P_bar * 100 * 1.15; 
+            P_kPa = P_bar * 100 * 1.08; 
             if(P_kPa < 0) P_kPa = 0;
             if(P_kPa > 200) P_kPa = 200;
 
             // 1. Bypass Logic: Lower pressure = higher bypass. Smaller apex = lower bypass.
-            bypassFraction = (18 + (feedDensity * 0.5) - (P_kPa * 0.1) + ((apexDia - 34) * 0.35));
+            bypassFraction = (15 + (feedDensity * 0.45) - (P_kPa * 0.08) + ((apexDia - 34) * 0.35));
             if(bypassFraction < 2) bypassFraction = 2;
             if(bypassFraction > 60) bypassFraction = 60;
 
-            // 2. Underflow Solids Concentration Logic: Smaller apex = higher density/concentration
-            let apexRestrictionFactor = Math.pow(58 / apexDia, 1.2);
-            ufSolidsWeight = feedDensity + (P_kPa * 0.18 * apexRestrictionFactor) + ((82 - apexDia) * 0.35);
+            // 2. Underflow Density Concentration Calculation Matrix
+            let apexRestrictionFactor = Math.pow(50 / apexDia, 1.2);
+            ufSolidsWeight = feedDensity + (P_kPa * 0.15 * apexRestrictionFactor) + ((66 - apexDia) * 0.45);
             if (ufSolidsWeight > 82) ufSolidsWeight = 82; 
 
-            // 3. Cut Size (d50) Empirical Modeling (Ranges strictly from 25um to 130um)
-            // Baseline centered at ~65 microns
-            let densityComponent = (feedDensity - 5) * 1.1;             // Higher = coarser
-            let vortexComponent = (vortexDia - 50) * 0.5;               // Larger = coarser
-            let apexComponent = (82 - apexDia) * 0.6;                   // Smaller = coarser
-            let pressureComponent = (200 - P_kPa) * 0.25;               // Lower = coarser
+            // 3. Normalized Cut Size (d50) Empirical Modeling System (Strictly 25 to 130 Microns)
+            // Weight components calculated relative to the user-requested boundary conditions.
+            let normDensity = (feedDensity - 5) / (65 - 5);          // 0 to 1
+            let normVortex = (vortexDia - 70) / (110 - 70);         // 0 to 1
+            let normApex = (66 - apexDia) / (66 - 34);              // 0 to 1 (Smaller apex yields coarser cut)
+            let normPressure = (200 - P_kPa) / 200;                 // 0 to 1 (Lower pressure yields coarser cut)
 
-            d50 = 25 + (densityComponent + vortexComponent + apexComponent + pressureComponent);
+            // Combined factor goes from 0.0 (absolute finest parameters) to 4.0 (absolute coarsest parameters)
+            let combinedCoarsenessFactor = normDensity + normVortex + normApex + normPressure;
+            
+            // Map linearly between the 25 µm floor and 130 µm ceiling
+            d50 = 25 + (combinedCoarsenessFactor / 4.0) * (130 - 25);
+            
             if (d50 < 25) d50 = 25;
             if (d50 > 130) d50 = 130;
         }
@@ -152,12 +157,12 @@
                 qhCtx.fillText((i*50)+' kPa', 5, y+3);
             }
             
-            let geoResistanceCoeff = 0.0035 * Math.pow(50 / vortexDia, 1.3);
+            let geoResistanceCoeff = 0.0035 * Math.pow(70 / vortexDia, 1.3);
             qhCtx.strokeStyle = '#7f8c8d'; qhCtx.lineWidth = 1.5; qhCtx.beginPath();
             for(let q=0; q<=120; q+=5) {
                 let x = pad + (q * (w-pad*2)/120); 
                 let hpSyst = 2.0 + geoResistanceCoeff * (q * q);
-                let pKpaSyst = (hpSyst - 2.0) * 0.098 * 100 * 1.15;
+                let pKpaSyst = (hpSyst - 2.0) * 0.098 * 100 * 1.08;
                 let y = h - pad - (pKpaSyst * (h-pad*2)/200);
                 if(q===0) qhCtx.moveTo(x,y); else qhCtx.lineTo(x,y);
             }
@@ -167,8 +172,8 @@
             let r = rpm/3000; let f = true;
             for(let q=0; q<=120; q+=5) {
                 let x = pad + (q * (w-pad*2)/120); 
-                let hp = (52*r*r) - 0.0028*q*q; 
-                let pKpaPump = (hp - 2.0) * 0.098 * 100 * 1.15;
+                let hp = (58*r*r) - 0.0025*q*q; 
+                let pKpaPump = (hp - 2.0) * 0.098 * 100 * 1.08;
                 let y = h - pad - (pKpaPump * (h-pad*2)/200);
                 if(pKpaPump >= 0 && y <= h-pad && y >= pad) { if(f) { qhCtx.moveTo(x,y); f = false; } else qhCtx.lineTo(x,y); }
             }
@@ -182,7 +187,6 @@
             qhCtx.fillText("System Loop Capacity", pad + 5, 14);
         }
 
-        // Helper helper mapping size values to logarithmic X-axis coordinate bounds
         function getLogX(size, width, padding) {
             let logMin = Math.log10(10);
             let logMax = Math.log10(10000);
@@ -195,13 +199,11 @@
             psdCtx.fillStyle = '#fafafa'; psdCtx.fillRect(0,0,w,h);
             psdCtx.strokeStyle = '#e0e0e0'; psdCtx.fillStyle = '#666'; psdCtx.font = '9px sans-serif';
             
-            // Vertical Y Axis ticks
             for(let i=0; i<=5; i++) {
                 let y = h - pad - (i * (h - pad*2)/5); psdCtx.beginPath(); psdCtx.moveTo(pad, y); psdCtx.lineTo(w-pad, y); psdCtx.stroke();
                 psdCtx.fillText((i*20)+'%', 5, y+3);
             }
             
-            // Logarithmic X Axis Grid lines (10, 100, 1000, 10000)
             const decades = [10, 100, 1000, 10000];
             decades.forEach(dec => {
                 let x = getLogX(dec, w, pad);
@@ -211,7 +213,6 @@
                 psdCtx.fillText(dec, x - 8, h - pad + 12);
             });
 
-            // Sub-ticks for logarithmic grid definition
             psdCtx.strokeStyle = '#f1f2f6';
             for (let dec = 10; dec < 10000; dec *= 10) {
                 for (let sub = 2; sub <= 9; sub++) {
@@ -220,7 +221,6 @@
                 }
             }
 
-            // Draw a vertical target marker showing exactly where d50 is situated on the log plot
             let d50X = getLogX(d50, w, pad);
             psdCtx.strokeStyle = 'rgba(155, 89, 182, 0.3)';
             psdCtx.lineWidth = 1.5;
@@ -228,24 +228,18 @@
             psdCtx.fillStyle = '#8e44ad';
             psdCtx.fillText(`d50: ${d50.toFixed(0)}µm`, d50X - 22, pad - 4);
 
-            // Constructing actual Logarithmic S-Curve via standard Plitt/Lynch mathematical style
             let effectiveBypass = (P_kPa < 30) ? 100 : bypassFraction;
             psdCtx.strokeStyle = '#2980b9'; psdCtx.lineWidth = 2.5; psdCtx.beginPath();
 
             let firstPoint = true;
-            // Scan across 150 points distributed from 10 to 10000 to construct smooth curve
             for(let xPixel = pad; xPixel <= w - pad; xPixel++) {
-                // Reverse calculate particle size from the current pixel location
                 let logMin = Math.log10(10);
                 let logMax = Math.log10(10000);
                 let logSize = logMin + ((xPixel - pad) / (w - pad * 2)) * (logMax - logMin);
                 let particleSize = Math.pow(10, logSize);
 
-                // Separation efficiency modeling equation relative to current dynamic d50
                 let ratio = particleSize / d50;
                 let sharpEfficiency = 100 * (1 - Math.exp(-0.693 * Math.pow(ratio, 2.2)));
-                
-                // Overlay active baseline liquid bypass footprint
                 let recoveryToUnderflow = effectiveBypass + ((100 - effectiveBypass) * (sharpEfficiency / 100));
                 
                 let yPixel = h - pad - (recoveryToUnderflow * (h - pad * 2) / 100);
@@ -284,15 +278,12 @@
                     this.radius = Math.min(lim-1, this.radius + (this.size/6)*0.2*f);
                     this.x = 75 + Math.cos(this.angle)*this.radius;
                     
-                    // Core collapse threshold logic (< 30 kPa generates ONLY underflow)
                     if(P_kPa >= 30 && this.y > 175 && this.size < (4.5 - d50 * 0.02) && Math.random() > (bypassFraction/100)) {
                         this.state = 'cy_up';
                     }
                     if(this.y >= 240) this.state = 'under';
                 }
                 else if(this.state === 'cy_up') { this.angle -= 0.22*f; this.y -= f*1.2; this.radius = Math.max(2, this.radius-0.3); this.x = 75 + Math.cos(this.angle)*this.radius; if(this.y <= 95) this.state = 'over'; }
-                
-                // Tracing overflow pipes back into slurry tank
                 else if(this.state === 'over') { 
                     if(this.y > 50 && this.x > 70) {
                         this.y -= f * 2; this.x = 75;
@@ -309,13 +300,10 @@
                 else if(this.state === 'under') { 
                     this.y += f * 2.2; 
                     let distFromApex = this.y - 240;
-                    
                     let currentSpread = 32 - (ufSolidsWeight - 40) * 1.05;
-                    
                     if(ufSolidsWeight >= 79.0 || currentSpread < 0) {
-                        currentSpread = 0.0; // Enforces minimum vertical drop angle of 0
+                        currentSpread = 0.0;
                     }
-                    
                     let spreadX = (distFromApex / 40) * currentSpread;
                     this.angle += 0.28;
                     this.x = 75 + Math.cos(this.angle) * (2 + spreadX);
@@ -347,7 +335,6 @@
             pCtx.moveTo(82, 240); pCtx.lineTo(75 + (2 + (75/40)*currentSpread), 315);
             pCtx.stroke(); pCtx.setLineDash([]);
 
-            // Fixed return pipeline routing
             pCtx.strokeStyle = '#7f8c8d'; pCtx.lineWidth = 2;
             pCtx.beginPath(); pCtx.moveTo(75, 95); pCtx.lineTo(75, 50); pCtx.lineTo(15, 50); pCtx.lineTo(15, 350); pCtx.lineTo(30, 350); pCtx.stroke();
 
